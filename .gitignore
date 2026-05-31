@@ -1,0 +1,10 @@
+node_modules/
+.env
+*.db
+session.txt
+test_genai*.ts
+check_grammy.ts
+test.txt
+.DS_Store
+__pycache__/
+.venv/
