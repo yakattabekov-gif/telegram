@@ -53,18 +53,16 @@ bot.on('business_message', async (ctx) => {
     // Check if message is sent by the business owner (including saved messages)
     const isOwner = (ownerId !== 0 && message.from?.id === ownerId) || (message.from?.id !== chatId);
     if (isOwner) {
-        // ОТКЛЮЧЕНО ДЛЯ ТЕСТОВ: pausedChats.set(chatId, Date.now());
+        pausedChats.set(chatId, Date.now());
         return;
     }
 
-    /* ОТКЛЮЧЕНО ДЛЯ ТЕСТОВ
     if (pausedChats.has(chatId)) {
         const lastTime = pausedChats.get(chatId)!;
         if (Date.now() - lastTime < 8 * 60 * 1000) {
             return; // paused for 8 minutes
         }
     }
-    */
 
     let userText = message.text || message.caption || "";
     let fileId: string | undefined;
