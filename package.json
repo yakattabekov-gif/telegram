@@ -1,0 +1,27 @@
+{
+  "name": "telegram_business_bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx src/bot.ts",
+    "dev": "tsx watch src/bot.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/genai": "^2.7.0",
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^17.4.2",
+    "grammy": "^1.43.0",
+    "input": "^1.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
+  }
+}
