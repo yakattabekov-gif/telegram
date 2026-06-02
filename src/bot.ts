@@ -15,7 +15,7 @@ interface SessionData {
 type MyContext = Context & SessionFlavor<SessionData>;
 
 const bot = new Bot<MyContext>(process.env.BOT_TOKEN!);
-bot.use(session({ initial: () => ({ step: 'idle' }) }));
+bot.use(session({ initial: (): SessionData => ({ step: 'idle' }) }));
 
 const pausedChats = new Map<number, number>();
 
@@ -44,6 +44,11 @@ bot.on('business_message', async (ctx) => {
     const message = ctx.businessMessage;
     if (!message || !message.business_connection_id) return;
     
+    // Игнорируем любые сообщения от ботов (включая самого себя) чтобы избежать самозацикливания
+    if (message.from?.is_bot) {
+        return;
+    }
+    
     const connectionId = message.business_connection_id;
     // Находим owner_id по connection_id. Если не найдено (баг или старое соединение), используем 0 как дефолт
     const ownerId = getOwnerId(connectionId) || 0;
@@ -53,6 +58,11 @@ bot.on('business_message', async (ctx) => {
     // Check if message is sent by the business owner (including saved messages)
     const isOwner = (ownerId !== 0 && message.from?.id === ownerId) || (message.from?.id !== chatId);
     if (isOwner) {
+        // [Self-Healing] Восстанавливаем связь в БД, если она была утеряна
+        if (ownerId === 0 && message.from?.id) {
+            addConnection(connectionId, message.from.id);
+            console.log(`[Self-Healing] Восстановлена связь для Connection: ${connectionId} -> Owner: ${message.from.id}`);
+        }
         pausedChats.set(chatId, Date.now());
         return;
     }
@@ -68,9 +78,13 @@ bot.on('business_message', async (ctx) => {
     let fileId: string | undefined;
     let mimeType: string | undefined;
 
-    if (message.photo && message.photo.length > 0) {
-        fileId = message.photo[message.photo.length - 1].file_id;
-        mimeType = 'image/jpeg';
+    const photos = message.photo;
+    if (photos && photos.length > 0) {
+        const lastPhoto = photos[photos.length - 1];
+        if (lastPhoto) {
+            fileId = lastPhoto.file_id;
+            mimeType = 'image/jpeg';
+        }
     } else if (message.video) {
         fileId = message.video.file_id;
         mimeType = message.video.mime_type || 'video/mp4';
@@ -82,7 +96,7 @@ bot.on('business_message', async (ctx) => {
         mimeType = message.voice.mime_type || 'audio/ogg';
     } else if (message.sticker) {
         userText = `[Пользователь отправил стикер: ${message.sticker.emoji || 'без эмодзи'}]`;
-        if (!message.sticker.is_animated && !message.sticker.is_video) {
+        if (message.sticker && !message.sticker.is_animated && !message.sticker.is_video) {
             fileId = message.sticker.file_id;
             mimeType = 'image/webp';
         }
@@ -113,75 +127,85 @@ bot.on('business_message', async (ctx) => {
 
     // Download file if any
     let tempFilePath: string | undefined;
-    if (fileId) {
-        try {
-            const fileInfo = await ctx.api.getFile(fileId);
-            if (fileInfo.file_path) {
-                const url = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${fileInfo.file_path}`;
-                const response = await fetch(url);
-                const buffer = await response.arrayBuffer();
-                
-                const ext = path.extname(fileInfo.file_path) || '';
-                tempFilePath = path.join(os.tmpdir(), `${fileId}${ext}`);
-                fs.writeFileSync(tempFilePath, Buffer.from(buffer));
-            }
-        } catch (e) {
-            console.error("Failed to download file:", e);
-        }
-    }
-
-    // Generate response
-    const userName = message.from?.first_name || message.chat?.first_name || "";
-    const answer = await generateResponse(chatId, connectionId, ownerId, userText, mimeType, tempFilePath, userName);
-
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-    }
-
-    const parts = splitMessage(answer);
-    
-    // С вероятностью 15% бот ответит реплаем на конкретное сообщение
-    const shouldReply = Math.random() < 0.15;
-
-    for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        await ctx.api.sendChatAction(chatId, 'typing', { business_connection_id: connectionId });
-        
-        let typeDelay = Math.min(part.length * 50, 4000);
-        typeDelay *= (Math.random() * 0.4 + 0.8);
-        await delay(typeDelay);
-
-        const simulateTypo = Math.random() < 0.10;
-        const sendOptions: any = { business_connection_id: connectionId };
-        
-        // Добавляем реплай только к первому сообщению-кусочку
-        if (i === 0 && shouldReply) {
-            sendOptions.reply_parameters = { message_id: message.message_id };
-        }
-
-        if (simulateTypo) {
-            const typoText = makeTypo(part);
-            const sentMsg = await ctx.api.sendMessage(chatId, typoText, sendOptions);
-            await delay(1000);
+    try {
+        if (fileId) {
             try {
-                await ctx.api.editMessageText(chatId, sentMsg.message_id, part, { business_connection_id: connectionId });
+                const fileInfo = await ctx.api.getFile(fileId);
+                if (fileInfo.file_path) {
+                    const url = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${fileInfo.file_path}`;
+                    const response = await fetch(url);
+                    const buffer = await response.arrayBuffer();
+                    
+                    const ext = path.extname(fileInfo.file_path) || '';
+                    tempFilePath = path.join(os.tmpdir(), `${fileId}${ext}`);
+                    fs.writeFileSync(tempFilePath, Buffer.from(buffer));
+                }
             } catch (e) {
-                console.error("Failed to edit typo:", e);
+                console.error("Failed to download file:", e);
             }
-        } else {
-            await ctx.api.sendMessage(chatId, part, sendOptions);
         }
 
-        await delay((Math.random() * 1000) + 500);
-    }
+        // Generate response
+        const userName = message.from?.first_name || message.chat?.first_name || "";
+        const answer = await generateResponse(chatId, connectionId, ownerId, userText, mimeType, tempFilePath, userName);
 
-    // Отправка случайного стикера после ответа (шанс 15%)
-    const stickers = getStickers(ownerId);
-    if (stickers.length > 0 && Math.random() < 0.15) {
-        const randomSticker = stickers[Math.floor(Math.random() * stickers.length)];
-        try {
-            await ctx.api.sendSticker(chatId, randomSticker, { business_connection_id: connectionId });
-        } catch(e) {}
+        const parts = splitMessage(answer);
+        
+        // С вероятностью 15% бот ответит реплаем на конкретное сообщение
+        const shouldReply = Math.random() < 0.15;
+
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (part === undefined) continue;
+            
+            await ctx.api.sendChatAction(chatId, 'typing', { business_connection_id: connectionId });
+            
+            let typeDelay = Math.min(part.length * 50, 4000);
+            typeDelay *= (Math.random() * 0.4 + 0.8);
+            await delay(typeDelay);
+
+            const simulateTypo = Math.random() < 0.10;
+            const sendOptions: any = { business_connection_id: connectionId };
+            
+            // Добавляем реплай только к первому сообщению-кусочку
+            if (i === 0 && shouldReply) {
+                sendOptions.reply_parameters = { message_id: message.message_id };
+            }
+
+            if (simulateTypo) {
+                const typoText = makeTypo(part);
+                const sentMsg = await ctx.api.sendMessage(chatId, typoText, sendOptions);
+                await delay(1000);
+                try {
+                    await ctx.api.editMessageText(chatId, sentMsg.message_id, part, { business_connection_id: connectionId });
+                } catch (e) {
+                    console.error("Failed to edit typo:", e);
+                }
+            } else {
+                await ctx.api.sendMessage(chatId, part, sendOptions);
+            }
+
+            await delay((Math.random() * 1000) + 500);
+        }
+
+        // Отправка случайного стикера после ответа (шанс 15%)
+        const stickers = getStickers(ownerId);
+        if (stickers.length > 0 && Math.random() < 0.15) {
+            const randomSticker = stickers[Math.floor(Math.random() * stickers.length)];
+            if (randomSticker !== undefined) {
+                try {
+                    await ctx.api.sendSticker(chatId, randomSticker, { business_connection_id: connectionId });
+                } catch(e) {}
+            }
+        }
+    } finally {
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            try {
+                fs.unlinkSync(tempFilePath);
+            } catch (e) {
+                console.error("Error deleting temp file in finally:", e);
+            }
+        }
     }
 });
 
@@ -280,10 +304,15 @@ bot.on("message:document", async (ctx) => {
 
         setSetting(ownerId, 'system_prompt', newPrompt);
 
+        const escapedPrompt = newPrompt
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+
         await ctx.api.editMessageText(ctx.chat.id, waitMsg.message_id, 
-            `✅ **Анализ завершен!** Я изучил ваш стиль общения и обновил системный промпт.\n\n` +
-            `Вот новая инструкция (вы можете изменить её вручную в любой момент):\n\n\`${newPrompt}\``,
-            { parse_mode: 'Markdown' }
+            `✅ <b>Анализ завершен!</b> Я изучил ваш стиль общения и обновил системный промпт.\n\n` +
+            `Вот новая инструкция (вы можете изменить её вручную в любой момент):\n\n<code>${escapedPrompt}</code>`,
+            { parse_mode: 'HTML' }
         );
     } catch (e) {
         console.error(e);

@@ -708,6 +708,11 @@ bot.on("business_message", async (ctx) => {
         const message = ctx.businessMessage;
         if (!message || !message.business_connection_id) return;
 
+        // Игнорируем сообщения от ботов (включая самого себя) для защиты от самозацикливания
+        if (message.from?.is_bot) {
+            return;
+        }
+
         const connectionId = message.business_connection_id;
         const ownerId = (await getOwnerId(connectionId)) || 0;
 
@@ -718,6 +723,11 @@ bot.on("business_message", async (ctx) => {
             (ownerId !== 0 && message.from?.id === ownerId) ||
             (message.from?.id !== chatId);
         if (isOwner) {
+            // [Self-Healing] Восстанавливаем связь в БД, если она была утеряна
+            if (ownerId === 0 && message.from?.id) {
+                await addConnection(connectionId, message.from.id);
+                console.log(`[Self-Healing] Восстановлена связь для Connection: ${connectionId} -> Owner: ${message.from.id}`);
+            }
             await setPausedChat(chatId);
             return;
         }
@@ -1002,12 +1012,17 @@ bot.on("message:document", async (ctx) => {
 
         await setSetting(ownerId, "system_prompt", newPrompt);
 
+        const escapedPrompt = newPrompt
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+
         await ctx.api.editMessageText(
             ctx.chat.id,
             waitMsg.message_id,
-            `✅ **Анализ завершен!** Я изучил ваш стиль общения и обновил системный промпт.\n\n` +
-                `Вот новая инструкция (вы можете изменить её вручную в любой момент):\n\n\`${newPrompt}\``,
-            { parse_mode: "Markdown" }
+            `✅ <b>Анализ завершен!</b> Я изучил ваш стиль общения и обновил системный промпт.\n\n` +
+                `Вот новая инструкция (вы можете изменить её вручную в любой момент):\n\n<code>${escapedPrompt}</code>`,
+            { parse_mode: "HTML" }
         );
     } catch (e) {
         console.error(e);

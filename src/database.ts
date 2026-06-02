@@ -53,11 +53,11 @@ export function addMessage(chatId: number, connectionId: string, role: Role, con
 export function getHistory(chatId: number, connectionId: string, limit: number = 20): { role: Role; content: string }[] {
     const stmt = db.prepare(`
         SELECT role, content FROM (
-            SELECT role, content, timestamp FROM messages
+            SELECT role, content, id FROM messages
             WHERE chat_id = ? AND connection_id = ?
-            ORDER BY timestamp DESC
+            ORDER BY id DESC
             LIMIT ?
-        ) ORDER BY timestamp ASC
+        ) ORDER BY id ASC
     `);
     const rows = stmt.all(chatId, connectionId, limit) as { role: Role; content: string }[];
     return rows;

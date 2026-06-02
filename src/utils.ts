@@ -6,7 +6,9 @@ export function makeTypo(text: string): string {
     if (validIndices.length === 0) return text;
     
     const idx = validIndices[Math.floor(Math.random() * validIndices.length)];
+    if (idx === undefined) return text;
     const word = words[idx];
+    if (!word) return text;
     
     const pos = Math.floor(Math.random() * (word.length - 2)) + 1;
     const wordWithTypo = word.slice(0, pos) + word[pos + 1] + word[pos] + word.slice(pos + 2);

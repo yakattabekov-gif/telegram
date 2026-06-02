@@ -12,7 +12,12 @@ export async function generateResponse(
     filePath?: string, 
     userName?: string
 ): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        console.error("GEMINI_API_KEY is not defined in environment variables!");
+        return "Ой, что-то со связью, напишу чуть позже...";
+    }
+    const ai = new GoogleGenAI({ apiKey });
     let sysPrompt = getSetting(ownerId, 'system_prompt', DEFAULT_PROMPT);
     
     if (userName) {
@@ -99,7 +104,11 @@ export async function generateResponse(
 }
 
 export async function analyzeChatHistory(fileBuffer: Buffer, ownerName: string): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        throw new Error("GEMINI_API_KEY is not defined in environment variables!");
+    }
+    const ai = new GoogleGenAI({ apiKey });
     
     let parsedText = "";
     try {
